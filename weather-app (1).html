@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Погода — прогноз в реальном времени</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --glass-bg: rgba(255,255,255,0.10);
+    --glass-bg-strong: rgba(255,255,255,0.16);
+    --glass-border: rgba(255,255,255,0.22);
+  }
+  html,body{ height:100%; }
+  body{
+    font-family: 'Inter', sans-serif;
+    color: #F4F7FA;
+    min-height:100vh;
+    overflow-x:hidden;
+  }
+  .font-display{ font-family:'Space Grotesk', sans-serif; }
+  .font-mono{ font-family:'JetBrains Mono', monospace; }
+
+  .bg-layer{
+    position:fixed; inset:0; z-index:-20;
+    transition: opacity 1.6s ease-in-out;
+  }
+  .bg-clear-day{ background: linear-gradient(160deg,#3E7FC1 0%,#6DB3E0 45%,#F2C879 100%); }
+  .bg-clear-night{ background: linear-gradient(160deg,#080B1F 0%,#161B3D 50%,#262C57 100%); }
+  .bg-cloudy-day{ background: linear-gradient(160deg,#5D6E82 0%,#8B9AAA 50%,#C3CBD2 100%); }
+  .bg-cloudy-night{ background: linear-gradient(160deg,#0F1219 0%,#20242F 50%,#333A48 100%); }
+  .bg-fog-day{ background: linear-gradient(160deg,#7C848C 0%,#A7AEB4 50%,#D6DADD 100%); }
+  .bg-fog-night{ background: linear-gradient(160deg,#12141A 0%,#282C33 50%,#3C4148 100%); }
+  .bg-rain-day{ background: linear-gradient(160deg,#33414F 0%,#4C5F70 50%,#71889A 100%); }
+  .bg-rain-night{ background: linear-gradient(160deg,#0A0D13 0%,#171F28 50%,#263038 100%); }
+  .bg-snow-day{ background: linear-gradient(160deg,#9DB7CC 0%,#CCE0EE 50%,#F2F8FC 100%); }
+  .bg-snow-night{ background: linear-gradient(160deg,#161E2E 0%,#293A52 50%,#425A78 100%); }
+  .bg-thunder-day{ background: linear-gradient(160deg,#262A3D 0%,#3D4360 50%,#5B5F84 100%); }
+  .bg-thunder-night{ background: linear-gradient(160deg,#0B0C16 0%,#1E1F35 50%,#33334F 100%); }
+
+  .glass{
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+  }
+  .glass-strong{
+    background: var(--glass-bg-strong);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+  }
+  .no-scrollbar::-webkit-scrollbar{ display:none; }
+  .no-scrollbar{ -ms-overflow-style:none; scrollbar-width:none; }
+
+  .skeleton{
+    background: linear-gradient(90deg, rgba(255,255,255,0.06) 25%, rgba(255,255,255,0.15) 37%, rgba(255,255,255,0.06) 63%);
+    background-size: 400% 100%;
+    animation: skeleton-loading 1.6s ease-in-out infinite;
+  }
+  @keyframes skeleton-loading{
+    0%{ background-position: 100% 50%; }
+    100%{ background-position: 0 50%; }
+  }
+
+  .fade-in{ animation: fadeIn 0.6s ease both; }
+  @keyframes fadeIn{ from{opacity:0; transform: translateY(6px);} to{opacity:1; transform: translateY(0);} }
+
+  input:focus{ outline:none; }
+  ::placeholder{ color: rgba(244,247,250,0.55); }
+
+  @media (prefers-reduced-motion: reduce){
+    .skeleton, .fade-in, .bg-layer{ animation:none !important; transition:none !important; }
+  }
+</style>
+</head>
+<body class="relative">
+
+  <div id="bg-layer-a" class="bg-layer bg-clear-day"></div>
+  <div id="bg-layer-b" class="bg-layer" style="opacity:0"></div>
+
+  <div class="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 pb-16 pt-6">
+
+    <!-- Header: search + controls -->
+    <header class="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between mb-8">
+      <div class="relative w-full sm:max-w-sm">
+        <div class="glass rounded-2xl flex items-center gap-2 px-4 py-3">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="opacity-70 shrink-0">
+            <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input id="city-input" type="text" placeholder="Найти город…" autocomplete="off"
+                 class="bg-transparent w-full text-sm sm:text-base placeholder:text-white/50 text-white">
+        </div>
+        <div id="suggestions" class="hidden absolute mt-2 w-full glass-strong rounded-2xl overflow-hidden z-30"></div>
+      </div>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <button id="geo-btn" title="Определить местоположение"
+                class="glass rounded-2xl p-3 hover:bg-white/20 transition-colors">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+          </svg>
+        </button>
+        <div class="glass rounded-2xl flex text-sm font-mono overflow-hidden">
+          <button id="unit-c" class="px-3 py-3 transition-colors bg-white/20">°C</button>
+          <button id="unit-f" class="px-3 py-3 transition-colors">°F</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Error banner -->
+    <div id="error-banner" class="hidden glass rounded-2xl px-5 py-4 mb-6 border-red-300/30">
+      <p id="error-text" class="text-sm text-white/90"></p>
+    </div>
+
+    <!-- Skeleton -->
+    <div id="skeleton" class="space-y-6">
+      <div class="glass-strong rounded-3xl p-8 h-48 skeleton"></div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div class="glass rounded-2xl h-24 skeleton"></div>
+        <div class="glass rounded-2xl h-24 skeleton"></div>
+        <div class="glass rounded-2xl h-24 skeleton"></div>
+        <div class="glass rounded-2xl h-24 skeleton"></div>
+        <div class="glass rounded-2xl h-24 skeleton"></div>
+      </div>
+      <div class="glass rounded-3xl h-32 skeleton"></div>
+      <div class="glass rounded-3xl h-64 skeleton"></div>
+    </div>
+
+    <!-- Main content -->
+    <main id="content" class="hidden space-y-6">
+
+      <!-- Hero -->
+      <section class="glass-strong rounded-3xl p-6 sm:p-8 fade-in">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
+          <div>
+            <p id="city-name" class="font-display text-xl sm:text-2xl font-medium">—</p>
+            <p id="date-time" class="text-sm text-white/60 mt-1">—</p>
+            <div class="flex items-end gap-3 mt-4">
+              <span id="current-temp" class="font-display text-6xl sm:text-7xl font-semibold leading-none">—</span>
+              <span class="font-display text-2xl text-white/50 mb-2" id="current-unit">°C</span>
+            </div>
+            <p id="current-desc" class="text-white/75 mt-2">—</p>
+            <p id="feels-like" class="text-sm text-white/50 mt-1">—</p>
+          </div>
+          <div id="current-icon" class="w-28 h-28 sm:w-32 sm:h-32 mx-auto sm:mx-0 opacity-90"></div>
+        </div>
+      </section>
+
+      <!-- Details grid -->
+      <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 fade-in">
+        <div class="glass rounded-2xl p-4">
+          <p class="text-xs text-white/50 mb-1">Ветер</p>
+          <p id="detail-wind" class="font-mono text-lg">—</p>
+          <p id="detail-wind-dir" class="text-xs text-white/40 mt-0.5">—</p>
+        </div>
+        <div class="glass rounded-2xl p-4">
+          <p class="text-xs text-white/50 mb-1">Влажность</p>
+          <p id="detail-humidity" class="font-mono text-lg">—</p>
+        </div>
+        <div class="glass rounded-2xl p-4">
+          <p class="text-xs text-white/50 mb-1">Давление</p>
+          <p id="detail-pressure" class="font-mono text-lg">—</p>
+        </div>
+        <div class="glass rounded-2xl p-4">
+          <p class="text-xs text-white/50 mb-1">УФ-индекс</p>
+          <p id="detail-uv" class="font-mono text-lg">—</p>
+        </div>
+        <div class="glass rounded-2xl p-4 col-span-2 sm:col-span-1">
+          <p class="text-xs text-white/50 mb-1">Видимость</p>
+          <p id="detail-visibility" class="font-mono text-lg">—</p>
+        </div>
+      </section>
+
+      <!-- Hourly -->
+      <section class="fade-in">
+        <p id="hourly-heading" class="text-sm text-white/60 mb-3">Прогноз по часам — сегодня</p>
+        <div id="hourly-scroll" class="glass rounded-3xl p-4 flex gap-4 overflow-x-auto no-scrollbar"></div>
+      </section>
+
+      <!-- 7-day -->
+      <section class="glass rounded-3xl p-4 sm:p-5 fade-in">
+        <p class="text-sm text-white/60 mb-2 px-1">Прогноз на 7 дней · нажмите на день, чтобы посмотреть часы</p>
+        <div id="daily-list" class="divide-y divide-white/10"></div>
+      </section>
+
+      <footer class="text-center text-xs text-white/35 pt-4">
+        Данные: Open-Meteo · обновляется при каждом запросе
+      </footer>
+    </main>
+
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- State ----------
+  let units = 'C'; // 'C' or 'F'
+  let lastPayload = null; // raw API data cache for unit re-render
+  let activeLayer = 'a';
+  let suggestionItems = [];
+  let debounceTimer = null;
+  let selectedDay = 0; // index into daily.time, drives the hourly panel
+
+  // ---------- DOM ----------
+  const el = {
+    input: document.getElementById('city-input'),
+    suggestions: document.getElementById('suggestions'),
+    geoBtn: document.getElementById('geo-btn'),
+    unitC: document.getElementById('unit-c'),
+    unitF: document.getElementById('unit-f'),
+    errorBanner: document.getElementById('error-banner'),
+    errorText: document.getElementById('error-text'),
+    skeleton: document.getElementById('skeleton'),
+    content: document.getElementById('content'),
+    cityName: document.getElementById('city-name'),
+    dateTime: document.getElementById('date-time'),
+    currentTemp: document.getElementById('current-temp'),
+    currentUnit: document.getElementById('current-unit'),
+    currentDesc: document.getElementById('current-desc'),
+    feelsLike: document.getElementById('feels-like'),
+    currentIcon: document.getElementById('current-icon'),
+    detailWind: document.getElementById('detail-wind'),
+    detailWindDir: document.getElementById('detail-wind-dir'),
+    detailHumidity: document.getElementById('detail-humidity'),
+    detailPressure: document.getElementById('detail-pressure'),
+    detailUv: document.getElementById('detail-uv'),
+    detailVisibility: document.getElementById('detail-visibility'),
+    hourlyHeading: document.getElementById('hourly-heading'),
+    hourlyScroll: document.getElementById('hourly-scroll'),
+    dailyList: document.getElementById('daily-list'),
+  };
+
+  // ---------- Weather code → description / category (WMO codes, Open-Meteo) ----------
+  const WEATHER_CODES = {
+    0:  { text: 'Ясно',                cat: 'clear' },
+    1:  { text: 'Преимущественно ясно', cat: 'clear' },
+    2:  { text: 'Переменная облачность', cat: 'cloudy' },
+    3:  { text: 'Пасмурно',            cat: 'cloudy' },
+    45: { text: 'Туман',               cat: 'fog' },
+    48: { text: 'Изморозь',            cat: 'fog' },
+    51: { text: 'Слабая морось',       cat: 'rain' },
+    53: { text: 'Морось',              cat: 'rain' },
+    55: { text: 'Сильная морось',      cat: 'rain' },
+    56: { text: 'Ледяная морось',      cat: 'rain' },
+    57: { text: 'Сильная ледяная морось', cat: 'rain' },
+    61: { text: 'Небольшой дождь',     cat: 'rain' },
+    63: { text: 'Дождь',               cat: 'rain' },
+    65: { text: 'Сильный дождь',       cat: 'rain' },
+    66: { text: 'Ледяной дождь',       cat: 'rain' },
+    67: { text: 'Сильный ледяной дождь', cat: 'rain' },
+    71: { text: 'Небольшой снег',      cat: 'snow' },
+    73: { text: 'Снег',                cat: 'snow' },
+    75: { text: 'Сильный снег',        cat: 'snow' },
+    77: { text: 'Снежная крупа',       cat: 'snow' },
+    80: { text: 'Небольшой ливень',    cat: 'rain' },
+    81: { text: 'Ливень',              cat: 'rain' },
+    82: { text: 'Сильный ливень',      cat: 'rain' },
+    85: { text: 'Небольшой снегопад',  cat: 'snow' },
+    86: { text: 'Сильный снегопад',    cat: 'snow' },
+    95: { text: 'Гроза',               cat: 'thunder' },
+    96: { text: 'Гроза с градом',      cat: 'thunder' },
+    99: { text: 'Сильная гроза с градом', cat: 'thunder' },
+  };
+
+  function codeInfo(code){
+    return WEATHER_CODES[code] || { text: 'Нет данных', cat: 'cloudy' };
+  }
+
+  // ---------- Icons (inline SVG, stroke-based) ----------
+  function icon(cat, isDay, size){
+    size = size || 48;
+    const s = `width="${size}" height="${size}" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"`;
+    const sun = `<circle cx="32" cy="32" r="10" fill="currentColor" fill-opacity="0.25"/><circle cx="32" cy="32" r="10"/>
+      <line x1="32" y1="8" x2="32" y2="14"/><line x1="32" y1="50" x2="32" y2="56"/>
+      <line x1="8" y1="32" x2="14" y2="32"/><line x1="50" y1="32" x2="56" y2="32"/>
+      <line x1="15.5" y1="15.5" x2="19.5" y2="19.5"/><line x1="44.5" y1="44.5" x2="48.5" y2="48.5"/>
+      <line x1="15.5" y1="48.5" x2="19.5" y2="44.5"/><line x1="44.5" y1="19.5" x2="48.5" y2="15.5"/>`;
+    const moon = `<path d="M40 12a20 20 0 1 0 12 32 16 16 0 0 1-12-32z" fill="currentColor" fill-opacity="0.2"/>`;
+    const cloud = `<path d="M20 44a10 10 0 1 1 2-19.8A13 13 0 0 1 46 30a8 8 0 0 1-1 14H20z"/>`;
+    const fogLines = `<line x1="14" y1="48" x2="50" y2="48"/><line x1="10" y1="54" x2="54" y2="54"/>`;
+    const drops = (n)=> Array.from({length:n}).map((_,i)=>`<line x1="${24+i*8}" y1="50" x2="${21+i*8}" y2="58"/>`).join('');
+    const flakes = (n)=> Array.from({length:n}).map((_,i)=>`<g transform="translate(${24+i*9},54)"><line x1="-4" y1="0" x2="4" y2="0"/><line x1="0" y1="-4" x2="0" y2="4"/><line x1="-3" y1="-3" x2="3" y2="3"/><line x1="-3" y1="3" x2="3" y2="-3"/></g>`).join('');
+    const bolt = `<path d="M30 44l8-14h-6l6-12-14 18h6l-6 12" fill="currentColor" fill-opacity="0.3"/>`;
+
+    let inner = '';
+    switch(cat){
+      case 'clear':
+        inner = isDay ? sun : moon;
+        break;
+      case 'cloudy':
+        inner = isDay ? `<g opacity="0.65" transform="translate(-6,-8) scale(0.55)">${sun}</g>${cloud}` : `<g opacity="0.65">${moon}</g>${cloud}`;
+        break;
+      case 'fog':
+        inner = `${cloud}${fogLines}`;
+        break;
+      case 'rain':
+        inner = `${cloud}${drops(3)}`;
+        break;
+      case 'snow':
+        inner = `${cloud}${flakes(3)}`;
+        break;
+      case 'thunder':
+        inner = `${cloud}${bolt}`;
+        break;
+      default:
+        inner = cloud;
+    }
+    return `<svg ${s}>${inner}</svg>`;
+  }
+
+  // ---------- Background ----------
+  function bgClass(cat, isDay){
+    const map = {
+      clear:   isDay ? 'bg-clear-day'   : 'bg-clear-night',
+      cloudy:  isDay ? 'bg-cloudy-day'  : 'bg-cloudy-night',
+      fog:     isDay ? 'bg-fog-day'     : 'bg-fog-night',
+      rain:    isDay ? 'bg-rain-day'    : 'bg-rain-night',
+      snow:    isDay ? 'bg-snow-day'    : 'bg-snow-night',
+      thunder: isDay ? 'bg-thunder-day' : 'bg-thunder-night',
+    };
+    return map[cat] || 'bg-cloudy-day';
+  }
+  function setBackground(cat, isDay){
+    const cls = bgClass(cat, isDay);
+    const activeEl = document.getElementById('bg-layer-' + activeLayer);
+    const nextLayer = activeLayer === 'a' ? 'b' : 'a';
+    const nextEl = document.getElementById('bg-layer-' + nextLayer);
+    nextEl.className = 'bg-layer ' + cls;
+    requestAnimationFrame(()=>{
+      nextEl.style.opacity = '1';
+      activeEl.style.opacity = '0';
+    });
+    activeLayer = nextLayer;
+  }
+
+  // ---------- Helpers ----------
+  const WEEKDAYS = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+  const MONTHS = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+
+  function cToF(c){ return c * 9/5 + 32; }
+  function fmtTemp(c){
+    const v = units === 'C' ? c : cToF(c);
+    return Math.round(v);
+  }
+  function unitLabel(){ return units === 'C' ? '°C' : '°F'; }
+
+  function windDirection(deg){
+    const dirs = ['С','ССВ','СВ','ВСВ','В','ВЮВ','ЮВ','ЮЮВ','Ю','ЮЮЗ','ЮЗ','ЗЮЗ','З','ЗСЗ','СЗ','ССЗ'];
+    return dirs[Math.round(deg / 22.5) % 16];
+  }
+
+  function showError(msg){
+    el.errorText.textContent = msg;
+    el.errorBanner.classList.remove('hidden');
+  }
+  function hideError(){
+    el.errorBanner.classList.add('hidden');
+  }
+  function showSkeleton(){
+    el.skeleton.classList.remove('hidden');
+    el.content.classList.add('hidden');
+  }
+  function showContent(){
+    el.skeleton.classList.add('hidden');
+    el.content.classList.remove('hidden');
+  }
+
+  // ---------- Rendering ----------
+  function render(){
+    if(!lastPayload) return;
+    const { data, label } = lastPayload;
+    const cur = data.current;
+    const info = codeInfo(cur.weather_code);
+    const isDay = cur.is_day === 1;
+
+    el.cityName.textContent = label;
+    const now = new Date(cur.time.replace(' ', 'T'));
+    const weekday = WEEKDAYS[now.getDay()];
+    el.dateTime.textContent = `${weekday}, ${now.getDate()} ${MONTHS[now.getMonth()]}, ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+    el.currentTemp.textContent = fmtTemp(cur.temperature_2m);
+    el.currentUnit.textContent = unitLabel();
+    el.currentDesc.textContent = info.text;
+    el.feelsLike.textContent = `Ощущается как ${fmtTemp(cur.apparent_temperature)}${unitLabel()}`;
+    el.currentIcon.innerHTML = icon(info.cat, isDay, 112);
+
+    setBackground(info.cat, isDay);
+
+    el.detailWind.textContent = `${Math.round(cur.wind_speed_10m)} км/ч`;
+    el.detailWindDir.textContent = windDirection(cur.wind_direction_10m);
+    el.detailHumidity.textContent = `${Math.round(cur.relative_humidity_2m)}%`;
+    el.detailPressure.textContent = `${Math.round(cur.pressure_msl)} гПа`;
+
+    const hourlyTimes = data.hourly.time;
+    const nowIdx = hourlyTimes.findIndex(t => t === cur.time.slice(0,13) + ':00') ;
+    const uvNow = nowIdx >= 0 ? data.hourly.uv_index[nowIdx] : data.hourly.uv_index[0];
+    const visNow = nowIdx >= 0 ? data.hourly.visibility[nowIdx] : data.hourly.visibility[0];
+    el.detailUv.textContent = uvNow != null ? uvNow.toFixed(1) : '—';
+    el.detailVisibility.textContent = visNow != null ? `${(visNow/1000).toFixed(1)} км` : '—';
+
+    // Hourly panel, driven by the currently selected day
+    if(selectedDay >= data.daily.time.length) selectedDay = 0;
+    renderHourly(nowIdx, isDay);
+
+    // Daily
+    renderDaily();
+
+    showContent();
+  }
+
+  function renderHourly(nowIdx, isDayNow){
+    const { data } = lastPayload;
+    const hourlyTimes = data.hourly.time;
+    const dayDate = data.daily.time[selectedDay];
+    const dayStartIdx = hourlyTimes.findIndex(t => t.startsWith(dayDate));
+    const isToday = selectedDay === 0;
+
+    el.hourlyHeading.textContent = isToday
+      ? 'Прогноз по часам — сегодня'
+      : `Прогноз по часам — ${(() => { const dt = new Date(dayDate + 'T12:00:00'); return `${WEEKDAYS[dt.getDay()]}, ${dt.getDate()} ${MONTHS[dt.getMonth()]}`; })()}`;
+
+    el.hourlyScroll.innerHTML = '';
+    if(dayStartIdx < 0) return;
+
+    // Today: start from the current hour and step forward; other days: full day from 00:00, step 3h.
+    const startIdx = isToday && nowIdx >= 0 ? nowIdx : dayStartIdx;
+    const dayEndIdx = dayStartIdx + 24;
+
+    for(let i = startIdx; i < dayEndIdx && i < hourlyTimes.length; i += 3){
+      const t = hourlyTimes[i];
+      const hh = t.slice(11,16);
+      const code = data.hourly.weather_code[i];
+      const inf = codeInfo(code);
+      const dayFlag = data.hourly.is_day ? data.hourly.is_day[i] === 1 : isDayNow;
+      const temp = fmtTemp(data.hourly.temperature_2m[i]);
+      const card = document.createElement('div');
+      card.className = 'glass rounded-2xl px-4 py-3 flex flex-col items-center gap-2 min-w-[76px] shrink-0';
+      card.innerHTML = `
+        <span class="text-xs text-white/60 font-mono">${isToday && i === startIdx ? 'Сейчас' : hh}</span>
+        <div class="w-8 h-8">${icon(inf.cat, dayFlag, 32)}</div>
+        <span class="font-display text-lg">${temp}°</span>
+      `;
+      el.hourlyScroll.appendChild(card);
+    }
+  }
+
+  function renderDaily(){
+    const { data } = lastPayload;
+    el.dailyList.innerHTML = '';
+    const days = data.daily.time;
+    let globalMin = Math.min(...data.daily.temperature_2m_min);
+    let globalMax = Math.max(...data.daily.temperature_2m_max);
+    const range = Math.max(globalMax - globalMin, 1);
+
+    days.forEach((d, i) => {
+      const dt = new Date(d + 'T12:00:00');
+      const code = data.daily.weather_code[i];
+      const inf = codeInfo(code);
+      const min = fmtTemp(data.daily.temperature_2m_min[i]);
+      const max = fmtTemp(data.daily.temperature_2m_max[i]);
+      const barLeft = ((data.daily.temperature_2m_min[i] - globalMin) / range) * 100;
+      const barWidth = ((data.daily.temperature_2m_max[i] - data.daily.temperature_2m_min[i]) / range) * 100;
+
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'w-full flex items-center gap-3 py-3 px-2 rounded-2xl transition-colors text-left ' +
+        (i === selectedDay ? 'bg-white/15' : 'hover:bg-white/8');
+      row.innerHTML = `
+        <span class="w-20 text-sm text-white/70 shrink-0">${i === 0 ? 'Сегодня' : WEEKDAYS[dt.getDay()]}</span>
+        <div class="w-7 h-7 shrink-0">${icon(inf.cat, true, 28)}</div>
+        <span class="flex-1 text-sm text-white/50 hidden sm:block truncate">${inf.text}</span>
+        <span class="font-mono text-sm text-white/50 w-8 text-right">${min}°</span>
+        <div class="w-20 sm:w-28 h-1.5 rounded-full bg-white/10 relative overflow-hidden shrink-0">
+          <div class="absolute h-full rounded-full bg-white/60" style="left:${barLeft}%; width:${barWidth}%"></div>
+        </div>
+        <span class="font-mono text-sm w-8">${max}°</span>
+      `;
+      row.addEventListener('click', () => {
+        selectedDay = i;
+        renderDaily();
+        const cur = lastPayload.data.current;
+        const hourlyTimes = lastPayload.data.hourly.time;
+        const nowIdx = hourlyTimes.findIndex(t => t === cur.time.slice(0,13) + ':00');
+        renderHourly(nowIdx, cur.is_day === 1);
+        el.hourlyScroll.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+      el.dailyList.appendChild(row);
+    });
+  }
+
+  // ---------- API ----------
+  async function fetchForecast(lat, lon, label){
+    showSkeleton();
+    hideError();
+    try{
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,pressure_msl,is_day` +
+        `&hourly=temperature_2m,weather_code,is_day,uv_index,visibility` +
+        `&daily=weather_code,temperature_2m_max,temperature_2m_min` +
+        `&timezone=auto&forecast_days=7`;
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('network');
+      const data = await res.json();
+      lastPayload = { data, label };
+      selectedDay = 0;
+      render();
+    }catch(err){
+      showContent();
+      showError('Не удалось загрузить прогноз погоды. Проверьте соединение и попробуйте снова.');
+    }
+  }
+
+  async function reverseGeocodeLabel(lat, lon){
+    try{
+      const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=ru`);
+      if(!res.ok) throw new Error('reverse');
+      const d = await res.json();
+      return d.city || d.locality || d.principalSubdivision || 'Ваше местоположение';
+    }catch(e){
+      return 'Ваше местоположение';
+    }
+  }
+
+  function useGeolocation(){
+    if(!navigator.geolocation){
+      showError('Геолокация не поддерживается вашим браузером. Введите город вручную.');
+      return;
+    }
+    showSkeleton();
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const { latitude, longitude } = pos.coords;
+      const label = await reverseGeocodeLabel(latitude, longitude);
+      fetchForecast(latitude, longitude, label);
+    }, () => {
+      showContent();
+      showError('Не удалось определить местоположение. Введите город в строке поиска.');
+    }, { timeout: 8000 });
+  }
+
+  // ---------- City search / autocomplete ----------
+  async function searchCities(query){
+    if(query.length < 2){
+      el.suggestions.classList.add('hidden');
+      return;
+    }
+    try{
+      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=6&language=ru&format=json`);
+      const data = await res.json();
+      suggestionItems = data.results || [];
+      renderSuggestions();
+    }catch(e){
+      el.suggestions.classList.add('hidden');
+    }
+  }
+
+  function renderSuggestions(){
+    if(suggestionItems.length === 0){
+      el.suggestions.classList.add('hidden');
+      return;
+    }
+    el.suggestions.innerHTML = suggestionItems.map((r, i) => {
+      const parts = [r.name, r.admin1, r.country].filter(Boolean);
+      return `<button data-idx="${i}" class="suggestion-item w-full text-left px-4 py-3 hover:bg-white/15 transition-colors text-sm border-b border-white/5 last:border-b-0">${parts.join(', ')}</button>`;
+    }).join('');
+    el.suggestions.classList.remove('hidden');
+    el.suggestions.querySelectorAll('.suggestion-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const r = suggestionItems[parseInt(btn.dataset.idx, 10)];
+        el.input.value = r.name;
+        el.suggestions.classList.add('hidden');
+        fetchForecast(r.latitude, r.longitude, [r.name, r.country].filter(Boolean).join(', '));
+      });
+    });
+  }
+
+  el.input.addEventListener('input', (e) => {
+    clearTimeout(debounceTimer);
+    const q = e.target.value.trim();
+    debounceTimer = setTimeout(() => searchCities(q), 350);
+  });
+  document.addEventListener('click', (e) => {
+    if(!el.suggestions.contains(e.target) && e.target !== el.input){
+      el.suggestions.classList.add('hidden');
+    }
+  });
+
+  // ---------- Unit toggle ----------
+  function setUnits(u){
+    units = u;
+    el.unitC.classList.toggle('bg-white/20', u === 'C');
+    el.unitF.classList.toggle('bg-white/20', u === 'F');
+    if(lastPayload) render();
+  }
+  el.unitC.addEventListener('click', () => setUnits('C'));
+  el.unitF.addEventListener('click', () => setUnits('F'));
+  el.geoBtn.addEventListener('click', useGeolocation);
+
+  // ---------- Init ----------
+  useGeolocation();
+})();
+</script>
+</body>
+</html>
